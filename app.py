@@ -1,15 +1,14 @@
-import argparse
 import asyncio
 from functools import partial
 
 from pysyncobj import SyncObj, SyncObjConf
 from pysyncobj.batteries import ReplDict, ReplList
 
-from pywebio import session
 from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.session import *
+from raft_server import join_cluster
 
 # 最大消息记录保存
 MAX_MESSAGES_CNT = 10 ** 4
@@ -24,16 +23,18 @@ raft_server = None
 
 async def setup_raft(raft_addr, cluster):
     global raft_server
-    cfg = SyncObjConf(dynamicMembershipChange=True)
 
-    curr_host = session.get_info().server_host.split(':', 1)[0]
+    # raft_addr 为None时，加入Raft集群
+    if not raft_addr:
+        data = await input_group("加入Raft集群", [
+            input("当前节点的Raft通信端口", name="port"),
+            input("当前节点的Host地址", name="host", value='127.0.0.1', help_text="其他节点需要可以通过此Host与当前节点通信"),
+            input("集群节点地址", name="remote", placeholder='host:ip', help_text="填入集群中任一节点的地址即可")
+        ])
+        raft_addr = '%s:%s' % (data['host'], data['port'])
+        cluster = join_cluster(raft_addr, data['remote'])
 
-    # await input_group("加入Raft集群", [
-    #     input("当前节点的Raft通信端口", type=NUMBER),
-    #     input("当前节点的Host地址", value=curr_host, help_text="其他节点需要可以通过此Host与当前节点通信"),
-    #     input("集群地址")
-    # ])
-
+    cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data')
     raft_server = SyncObj(raft_addr, cluster,
                           consumers=[chat_msgs, node_user_cnt],
                           conf=cfg)
@@ -75,7 +76,7 @@ async def main(raft_addr, cluster):
     local_online_users.add(nickname)
     node_user_cnt.set(node_name, node_user_cnt[node_name] + 1, sync=True)
 
-    msg = ('📢', '`%s`加入聊天室. 该节点在线人数 %s, 全节点在线人数 %s' % (
+    msg = ('📢', '`%s`加入聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
         nickname, len(local_online_users), sum(node_user_cnt.values())))
     chat_msgs.append(msg, sync=True)
     put_markdown('`%s`: %s' % msg)
@@ -84,7 +85,7 @@ async def main(raft_addr, cluster):
     def on_close():
         local_online_users.remove(nickname)
         node_user_cnt.set(node_name, node_user_cnt[node_name] - 1, sync=True)
-        chat_msgs.append(('📢', '`%s`退出聊天室. 该节点在线人数 %s, 全节点在线人数 %s' % (
+        chat_msgs.append(('📢', '`%s`退出聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
             nickname, len(local_online_users), sum(node_user_cnt.values()))))
 
     refresh_task = run_async(refresh_msg(nickname))
@@ -111,13 +112,16 @@ async def main(raft_addr, cluster):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--raft_port', required=True, type=int)
-    parser.add_argument('--raft_host', default='127.0.0.1')
-    parser.add_argument('--cluster', required=True, help="空格分隔的集群端口列表")
-    args = parser.parse_args()
+    import sys
 
-    raft_addr = "%s:%s" % (args.raft_host, args.raft_port)
-    cluster = ['127.0.0.1:{}'.format(port) for port in args.cluster.split()]
+    cluster = sys.argv[1:]
 
-    start_server(partial(main, raft_addr=raft_addr, cluster=cluster), debug=True, auto_open_webbrowser=True)
+    if cluster:
+        raft_addr = cluster[0]
+        cluster = cluster[1:]
+    else:
+        raft_addr = None
+        cluster = None
+
+    start_server(partial(main, raft_addr=raft_addr, cluster=cluster),
+                 debug=False, auto_open_webbrowser=True)
