@@ -1,4 +1,4 @@
-import asyncio
+import asyncio, os
 from functools import partial
 
 from pysyncobj import SyncObj, SyncObjConf
@@ -13,6 +13,9 @@ from raft_server import join_cluster
 # 最大消息记录保存
 MAX_MESSAGES_CNT = 10 ** 4
 
+# 管理员账户名
+ADMIN_USER = '📢'
+
 chat_msgs = ReplList()  # 聊天记录 (name, msg)
 node_user_cnt = ReplDict()  # 每个节点的用户数
 
@@ -21,11 +24,25 @@ local_online_users = set()  # 本节点在线用户
 raft_server = None
 
 
+def onStateChanged(oldState, newState, node):
+    """节点角色发生变化时的回调函数"""
+    states = ["folower", "candidate", "leader"]
+    send_msg(ADMIN_USER, '节点`%s`角色发生变化, `%s` -> `%s`' % (node, states[oldState], states[newState]),
+             instant_output=False)
+
+
 async def setup_raft(raft_addr, cluster):
+    """初始化/连接 Raft 集群
+
+    :param raft_addr: 本节点用于Raft集群通信的地址；为None时表示加入现有集群，本节点地址由本节点第一位用户输入
+    :param cluster: 集群节点地址列表；为None时表示加入现有集群，集群节点地址由本节点第一位用户输入
+    :return: 本节点Raft集群通信地址
+    """
     global raft_server
 
-    # raft_addr 为None时，加入Raft集群
-    if not raft_addr:
+    mode = 'init'
+    if not raft_addr:  # raft_addr 为None时，表示加入Raft集群
+        mode = 'join'
         data = await input_group("加入Raft集群", [
             input("当前节点的Raft通信端口", name="port"),
             input("当前节点的Host地址", name="host", value='127.0.0.1', help_text="其他节点需要可以通过此Host与当前节点通信"),
@@ -33,11 +50,17 @@ async def setup_raft(raft_addr, cluster):
         ])
         raft_addr = '%s:%s' % (data['host'], data['port'])
         cluster = join_cluster(raft_addr, data['remote'])
+        print(raft_addr, cluster)
 
-    cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data')
+    cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data',
+                      onStateChanged=partial(onStateChanged, node=raft_addr))
     raft_server = SyncObj(raft_addr, cluster,
                           consumers=[chat_msgs, node_user_cnt],
                           conf=cfg)
+    if mode == 'join':
+        send_msg(ADMIN_USER, '节点`%s`加入集群' % raft_addr, instant_output=False)
+
+    return raft_addr
 
 
 async def refresh_msg(my_name):
@@ -74,10 +97,12 @@ def send_msg(user, content, instant_output=True, sync=False):
 
 async def main(raft_addr, cluster):
     global chat_msgs, raft_server
-    node_name = raft_addr
+
     if raft_server is None:
-        await setup_raft(raft_addr, cluster)
-        node_user_cnt.set(node_name, 0, sync=True)
+        raft_addr = await setup_raft(raft_addr, cluster)
+        node_user_cnt.set(raft_addr, 0, sync=True)
+
+    node_name = raft_addr
 
     set_output_fixed_height(True)
     set_title("Raft Chat Room")
@@ -85,7 +110,7 @@ async def main(raft_addr, cluster):
     """, lstrip=True)
 
     nickname = await input("请输入你的昵称", required=True,
-                           valid_func=lambda n: '昵称已被使用' if n in local_online_users or n == '📢' else None)
+                           valid_func=lambda n: '昵称已被使用' if n in local_online_users or n == ADMIN_USER else None)
     nickname = '%s@%s' % (nickname, node_name)
 
     local_online_users.add(nickname)
@@ -93,13 +118,13 @@ async def main(raft_addr, cluster):
 
     msg = '`%s`加入聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
         nickname, len(local_online_users), sum(node_user_cnt.values()))
-    send_msg('📢', msg, sync=True)
+    send_msg(ADMIN_USER, msg, sync=True)
 
     @defer_call
     def on_close():
         local_online_users.remove(nickname)
         node_user_cnt.set(node_name, node_user_cnt[node_name] - 1, sync=True)
-        send_msg('📢', '`%s`退出聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
+        send_msg(ADMIN_USER, '`%s`退出聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
             nickname, len(local_online_users), sum(node_user_cnt.values())), instant_output=False)
 
     # 启动后台任务来刷新聊天消息
