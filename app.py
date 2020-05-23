@@ -112,6 +112,25 @@ async def main(raft_addr, cluster):
 
 
 if __name__ == '__main__':
+    """
+    两种启动模式：
+    
+    1. 初始化Raft集群：
+    
+        python3 app.py <本节点地址> <其他节点地址> <其他节点地址> ...
+        
+    注意：集群至少含有两个节点才可以正常工作
+    
+    示例：
+        # 初始化两个节点的Raft集群 
+        python3 app.py 127.0.0.1:8101 127.0.0.1:8100
+        python3 app.py 127.0.0.1:8100 127.0.0.1:8101
+    
+    2. 加入现有的Raft集群：
+        
+        python3 app.py  # 在弹出的浏览器中设置本节点和集群节点地址
+    
+    """
     import sys
 
     cluster = sys.argv[1:]
