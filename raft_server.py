@@ -8,7 +8,7 @@ def get_node_info(address):
 
     data = dict(i.split(': ', 1) for i in data.splitlines())
 
-    res_key = ['commit_idx', 'last_applied', 'leader', 'leader_commit_idx', 'log_len', 'partner_nodes_count',
+    res_key = ['commit_idx', 'last_applied', 'leader', 'leader_commit_idx', 'log_len',
                'raft_term', 'self', 'uptime', 'state']
 
     res = {k: data[k] for k in res_key}
@@ -21,7 +21,10 @@ def get_node_info(address):
     res['partner_nodes'] = [
         k[len("partner_node_status_server_"):]
         for k in data.keys() if k.startswith("partner_node_status_server_")
+        if k[len("partner_node_status_server_"):] != address
     ]
+
+    res['partner_nodes_count'] = len(res['partner_nodes'])
 
     return res
 
