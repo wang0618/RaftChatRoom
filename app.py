@@ -41,7 +41,10 @@ async def setup_raft(raft_addr, cluster):
 
 
 async def refresh_msg(my_name):
-    """刷新聊天消息"""
+    """刷新聊天消息
+
+    将全局聊天记录列表中新增的聊天记录发送到当前会话，但排除掉当前用户的消息，当前用户的消息会在用户提交后直接输出
+    """
     global chat_msgs
     last_idx = len(chat_msgs)
     while True:
@@ -57,15 +60,27 @@ async def refresh_msg(my_name):
         last_idx = len(chat_msgs)
 
 
+def send_msg(user, content, instant_output=True, sync=False):
+    """向聊天室发送消息
+
+    :param str user: 消息发送者
+    :param str content: 消息内容，markdown格式字符串
+    :param bool instant_output: 是否立即向当前会话输出此消息
+    """
+    chat_msgs.append((user, content), sync=sync)
+    if instant_output:
+        put_markdown('`%s`: %s' % (user, content))
+
+
 async def main(raft_addr, cluster):
     global chat_msgs, raft_server
     node_name = raft_addr
     if raft_server is None:
         await setup_raft(raft_addr, cluster)
-        node_user_cnt[node_name] = 0
+        node_user_cnt.set(node_name, 0, sync=True)
 
     set_output_fixed_height(True)
-    set_title("PyWebIO Chat Room")
+    set_title("Raft Chat Room")
     put_markdown("""欢迎来到聊天室，你可以和当前Raft集群所有节点上在线的用户聊天\n
     """, lstrip=True)
 
@@ -76,18 +91,18 @@ async def main(raft_addr, cluster):
     local_online_users.add(nickname)
     node_user_cnt.set(node_name, node_user_cnt[node_name] + 1, sync=True)
 
-    msg = ('📢', '`%s`加入聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
-        nickname, len(local_online_users), sum(node_user_cnt.values())))
-    chat_msgs.append(msg, sync=True)
-    put_markdown('`%s`: %s' % msg)
+    msg = '`%s`加入聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
+        nickname, len(local_online_users), sum(node_user_cnt.values()))
+    send_msg('📢', msg, sync=True)
 
     @defer_call
     def on_close():
         local_online_users.remove(nickname)
         node_user_cnt.set(node_name, node_user_cnt[node_name] - 1, sync=True)
-        chat_msgs.append(('📢', '`%s`退出聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
-            nickname, len(local_online_users), sum(node_user_cnt.values()))))
+        send_msg('📢', '`%s`退出聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
+            nickname, len(local_online_users), sum(node_user_cnt.values())), instant_output=False)
 
+    # 启动后台任务来刷新聊天消息
     refresh_task = run_async(refresh_msg(nickname))
 
     while True:
@@ -98,16 +113,11 @@ async def main(raft_addr, cluster):
         if data is None:
             break
 
-        if data['msg'].startswith('!'):
-            try:
-                eval(data['msg'][1:], globals(), globals())
-            except Exception as e:
-                put_text('%s' % e)
+        send_msg(nickname, data['msg'])
 
-        put_markdown('`%s`: %s' % (nickname, data['msg']))
-        chat_msgs.append((nickname, data['msg']))
-
+    # 关闭后台任务
     refresh_task.close()
+
     put_text("你已经退出聊天室")
 
 
