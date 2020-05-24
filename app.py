@@ -1,4 +1,4 @@
-import asyncio, os
+import asyncio
 from functools import partial
 
 from pysyncobj import SyncObj, SyncObjConf
@@ -8,7 +8,7 @@ from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.session import *
-from raft_server import join_cluster
+from raft_server import join_cluster, get_node_info
 
 # 最大消息记录保存
 MAX_MESSAGES_CNT = 10 ** 4
@@ -50,7 +50,9 @@ async def setup_raft(raft_addr, cluster):
         ])
         raft_addr = '%s:%s' % (data['host'], data['port'])
         cluster = join_cluster(raft_addr, data['remote'])
-        print(raft_addr, cluster)
+        if not cluster:
+            put_markdown("### 加入集群失败")
+            return
 
     cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data',
                       onStateChanged=partial(onStateChanged, node=raft_addr))
@@ -95,11 +97,44 @@ def send_msg(user, content, instant_output=True, sync=False):
         put_markdown('`%s`: %s' % (user, content))
 
 
+def show_cluster_info(node_addr):
+    """显示集群信息"""
+    info = get_node_info(node_addr)
+    popup("集群信息", [
+        put_markdown("#### 当前节点信息"),
+        put_table([
+            ["数据项", "值"],
+            ["节点地址", node_addr],
+            ["节点角色", info['state']],
+            ["启动时长", "%s秒" % info['uptime']],
+            ["日志长度", info['log_len']],
+            ["任期号", info['raft_term']],
+            ["已提交的日志条目索引值", info['commit_idx']],
+            ["以应用的日志条目索引值", info['last_applied']],
+        ]),
+
+        put_markdown("#### 集群信息"),
+        put_table([
+            ["数据项", "值"],
+            ["集群Leader节点", info['leader']],
+            ["集群节点数量", info['partner_nodes_count'] + 1],
+        ]),
+
+        put_markdown("#### 当前节点的相邻节点列表"),
+        put_table([
+            ["节点地址", "连接状态"],
+            *info['partner_nodes'].items()
+        ]),
+    ])
+
+
 async def main(raft_addr, cluster):
     global chat_msgs, raft_server
 
     if raft_server is None:
         raft_addr = await setup_raft(raft_addr, cluster)
+        if not raft_addr:
+            return
         node_user_cnt.set(raft_addr, 0, sync=True)
 
     node_name = raft_addr
@@ -132,13 +167,16 @@ async def main(raft_addr, cluster):
 
     while True:
         data = await input_group('发送消息', [
-            input(name='msg', help_text='消息内容支持Markdown 语法', required=True),
-            actions(name='cmd', buttons=['发送', {'label': '退出', 'type': 'cancel'}])
-        ])
+            input(name='msg', help_text='消息内容支持Markdown语法, 回车即可发送'),
+            actions(name='cmd', buttons=['发送', "集群信息", {'label': '退出', 'type': 'cancel'}])
+        ], valid_func=lambda d: ('msg', '请输入要发送的内容') if d and d['cmd'] == '发送' and not d['msg'] else None)
         if data is None:
             break
 
-        send_msg(nickname, data['msg'])
+        if data['cmd'] == '集群信息':
+            show_cluster_info(raft_addr)
+        elif data['cmd'] == '发送' and data['msg']:
+            send_msg(nickname, data['msg'])
 
     # 关闭后台任务
     refresh_task.close()
