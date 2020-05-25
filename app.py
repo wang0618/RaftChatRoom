@@ -8,6 +8,7 @@ from pywebio import start_server
 from pywebio.input import *
 from pywebio.output import *
 from pywebio.session import *
+from pywebio import session
 from raft_server import join_cluster, get_node_info
 
 # 最大消息记录保存
@@ -18,6 +19,7 @@ ADMIN_USER = '📢'
 
 chat_msgs = ReplList()  # 聊天记录 (name, msg)
 node_user_cnt = ReplDict()  # 每个节点的用户数
+node_webui_addr = ReplDict()  # 每个节点Web聊天室的地址
 
 local_online_users = set()  # 本节点在线用户
 
@@ -57,7 +59,7 @@ async def setup_raft(raft_addr, cluster):
     cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data',
                       onStateChanged=partial(onStateChanged, node=raft_addr))
     raft_server = SyncObj(raft_addr, cluster,
-                          consumers=[chat_msgs, node_user_cnt],
+                          consumers=[chat_msgs, node_user_cnt, node_webui_addr],
                           conf=cfg)
     if mode == 'join':
         send_msg(ADMIN_USER, '节点`%s`加入集群' % raft_addr, instant_output=False)
@@ -100,6 +102,7 @@ def send_msg(user, content, instant_output=True, sync=False):
 def show_cluster_info(node_addr):
     """显示集群信息"""
     info = get_node_info(node_addr)
+    link_tpl = '<a href="{0}" target="_blank">{0}</a>'
     popup("集群信息", [
         put_markdown("#### 当前节点信息"),
         put_table([
@@ -110,7 +113,7 @@ def show_cluster_info(node_addr):
             ["日志长度", info['log_len']],
             ["任期号", info['raft_term']],
             ["已提交的日志条目索引值", info['commit_idx']],
-            ["以应用的日志条目索引值", info['last_applied']],
+            ["已应用的日志条目索引值", info['last_applied']],
         ]),
 
         put_markdown("#### 集群信息"),
@@ -120,10 +123,13 @@ def show_cluster_info(node_addr):
             ["集群节点数量", info['partner_nodes_count'] + 1],
         ]),
 
-        put_markdown("#### 当前节点的相邻节点列表"),
+        put_markdown("#### 其他节点状态"),
         put_table([
-            ["节点地址", "连接状态"],
-            *info['partner_nodes'].items()
+            ["节点地址", "连接状态", "聊天室地址"],
+            *[
+                (k, v, link_tpl.format(node_webui_addr.get(k)))
+                for k, v in info['partner_nodes'].items()
+            ]
         ]),
     ])
 
@@ -136,11 +142,12 @@ async def main(raft_addr, cluster):
         if not raft_addr:
             return
         node_user_cnt.set(raft_addr, 0, sync=True)
+        node_webui_addr.set(raft_addr, session.get_info().origin)
 
     node_name = raft_addr
 
     set_output_fixed_height(True)
-    set_title("Raft Chat Room")
+    set_title("Raft Chat Room [%s]" % raft_addr)
     put_markdown("""欢迎来到聊天室，你可以和当前Raft集群所有节点上在线的用户聊天\n
     """, lstrip=True)
 
