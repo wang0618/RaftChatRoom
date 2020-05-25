@@ -155,9 +155,9 @@ async def main(raft_addr, cluster):
 
     nickname = await input("请输入你的昵称", required=True,
                            valid_func=lambda n: '昵称已被使用' if n in local_online_users or n == ADMIN_USER else None)
+    local_online_users.add(nickname)
     nickname = '%s@%s' % (nickname, node_name)
 
-    local_online_users.add(nickname)
     node_user_cnt.set(node_name, node_user_cnt[node_name] + 1, sync=True)
 
     msg = '`%s`加入聊天室. 所在节点在线人数 %s, 全节点在线人数 %s' % (
