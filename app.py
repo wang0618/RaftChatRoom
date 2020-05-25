@@ -1,4 +1,4 @@
-import asyncio
+import asyncio, os
 from functools import partial
 
 from pysyncobj import SyncObj, SyncObjConf
@@ -56,8 +56,10 @@ async def setup_raft(raft_addr, cluster):
             put_markdown("### 加入集群失败")
             return
 
+    raft_port = raft_addr.split(":", 1)[-1]
     cfg = SyncObjConf(dynamicMembershipChange=True, fullDumpFile=raft_addr + '.data',
-                      onStateChanged=partial(onStateChanged, node=raft_addr))
+                      onStateChanged=partial(onStateChanged, node=raft_addr),
+                      bindAddress="0.0.0.0:%s" % raft_port)
     raft_server = SyncObj(raft_addr, cluster,
                           consumers=[chat_msgs, node_user_cnt, node_webui_addr],
                           conf=cfg)
@@ -210,6 +212,8 @@ if __name__ == '__main__':
         
         python3 app.py  # 在弹出的浏览器中设置本节点和集群节点地址
     
+    支持的环境变量
+    WEB_PORT 聊天室界面的端口
     """
     import sys
 
@@ -223,4 +227,4 @@ if __name__ == '__main__':
         cluster = None
 
     start_server(partial(main, raft_addr=raft_addr, cluster=cluster),
-                 debug=False, auto_open_webbrowser=True)
+                 debug=False, auto_open_webbrowser=True, port=int(os.environ.get("WEB_PORT", 0)))
