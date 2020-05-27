@@ -45,9 +45,10 @@ async def setup_raft(raft_addr, cluster):
     mode = 'init'
     if not raft_addr:  # raft_addr 为None时，表示加入Raft集群
         mode = 'join'
+        currhost = session.get_info().origin.rsplit(":", 1)[0].split("//", 1)[-1]
         data = await input_group("加入Raft集群", [
             input("当前节点的Raft通信端口", name="port"),
-            input("当前节点的Host地址", name="host", value='127.0.0.1', help_text="其他节点需要可以通过此Host与当前节点通信"),
+            input("当前节点的Host地址", name="host", value=currhost, help_text="其他节点需要可以通过此Host与当前节点通信"),
             input("集群节点地址", name="remote", placeholder='host:ip', help_text="填入集群中任一节点的地址即可")
         ])
         raft_addr = '%s:%s' % (data['host'], data['port'])
